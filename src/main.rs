@@ -4,7 +4,8 @@ use num_traits::{One, Zero};
 use ramp::{rational::Rational, Int};
 use std::fmt::Display;
 use std::str::FromStr;
-use termion::color;
+use std::io::{stdin, BufRead};
+use termion::{color, is_tty};
 use Token::*;
 
 // Readable tokens from command line
@@ -134,7 +135,7 @@ impl Calculator {
         let tokens = Token::lex(word).collect::<Result<Vec<_>, _>>()?;
         // We check for stack exhaustion before attempting to run anything.
         // that way we don't end up with a half-evaluated expression.
-        self.stack_exhaustion(&tokens)
+        self.check_stack_exhaustion(&tokens)
             .map_err(|message| TokenError {
                 message,
                 span: 0..word.len(),
@@ -224,7 +225,7 @@ impl Calculator {
         Ok(())
     }
 
-    fn stack_exhaustion<'a>(
+    fn check_stack_exhaustion<'a>(
         &self,
         stack: impl IntoIterator<Item = &'a Token>,
     ) -> Result<(), Box<dyn Display>> {
@@ -281,23 +282,61 @@ fn colorize(word: &str) -> String {
     res
 }
 
-fn main() {
+fn main() -> std::io::Result<()> {
     let mut calculator = Calculator::default();
-    let mut con = Context::new();
-    let prefix = color::Fg(color::Magenta);
-    let suffix = color::Fg(color::Reset);
-    let prompt = format!("{prefix}>>{suffix} ", prefix = prefix, suffix = suffix);
-    while let Ok(input) = con.read_line(&prompt, Some(Box::new(colorize)), &mut EmptyCompleter) {
-        match calculator.parse(&input) {
-            Ok(()) => (),
-            Err(TokenError { message, span }) => eprintln!(
-                "{}{}{} {}{}",
-                " ".repeat(span.start + 3),
-                color::LightRed.fg_str(),
-                "^".repeat(span.len()),
-                message,
-                color::Reset.fg_str(),
-            ),
+    if is_tty(&stdin()) {
+        let mut con = Context::new();
+        let prefix = color::Fg(color::Magenta);
+        let suffix = color::Fg(color::Reset);
+        let prompt = format!("{prefix}>>{suffix} ", prefix = prefix, suffix = suffix);
+        while let Ok(input) = con.read_line(&prompt, Some(Box::new(colorize)), &mut EmptyCompleter) {
+            match calculator.parse(&input) {
+                Ok(()) => (),
+                Err(TokenError { message, span }) => eprintln!(
+                    "{}{}{} {}{}",
+                    " ".repeat(span.start + 3),
+                    color::LightRed.fg_str(),
+                    "^".repeat(span.len()),
+                    message,
+                    color::Reset.fg_str(),
+                ),
+            }
+            for num in &calculator.stack {
+                let (num, den) = num.clone().into_parts();
+                if den.is_one() {
+                    println!("{num} (0x{num:x})", num = num);
+                } else {
+                    println!("{num}/{den} (0x{num:x}/{den:x})", num = num, den = den,);
+                }
+            }
+            con.history.push(input.into()).unwrap();
+        }
+    } else {
+        for (line_offset, input) in stdin().lock().lines().enumerate() {
+            let input = match input {
+                Ok(i) => i,
+                Err(e) => {
+                    eprintln!("unexpected IO error {}", e);
+                    std::process::exit(2);
+                }
+            };
+            match calculator.parse(&input) {
+                Ok(_) => (),
+                Err(TokenError { message, span }) => {
+                    let linum_str = format!("{}", line_offset + 1);
+                    eprintln!(
+                        "{}: {}\n{}{}{} {}{}",
+                        linum_str,
+                        input,
+                        " ".repeat(span.start + linum_str.len() + 2),
+                        color::LightRed.fg_str(),
+                        "^".repeat(span.len()),
+                        message,
+                        color::Reset.fg_str(),
+                    );
+                    std::process::exit(1);
+                }
+            }
         }
         for num in &calculator.stack {
             let (num, den) = num.clone().into_parts();
@@ -307,6 +346,6 @@ fn main() {
                 println!("{num}/{den} (0x{num:x}/{den:x})", num = num, den = den,);
             }
         }
-        con.history.push(input.into()).unwrap();
     }
-}
+    Ok(())
+ }
