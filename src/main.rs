@@ -22,6 +22,7 @@ pub enum Token {
     Duplicate,
     Drop,
     Empty,
+    Round,
 }
 
 pub struct TokenError {
@@ -62,6 +63,7 @@ impl FromStr for Token {
             '-' => unexpected_trailing_chars(from, Minus, 1),
             '|' => unexpected_trailing_chars(from, Or, 1),
             '&' => unexpected_trailing_chars(from, And, 1),
+            '_' => unexpected_trailing_chars(from, Round, 1),
             '0' => match chars.next() {
                 Some('x') => match Int::from_str_radix(&from[2..], 16) {
                     Ok(n) => Ok(Number(n.into())),
@@ -220,6 +222,12 @@ impl Calculator {
                         self.stack.push(Rational::new(lhs.round() | rhs.round(), 1.into()));
                     }
                 }
+                Round => {
+                    let rhs = self.stack.pop();
+                    if let Some(rhs) = rhs {
+                        self.stack.push(Rational::new(rhs.round(), 1.into()));
+                    }
+                }
             }
         }
         Ok(())
@@ -239,6 +247,9 @@ impl Calculator {
                 // add 1 back.
                 Plus | Minus | Times | Divide | Exp | Or | And => {
                     delta.and_then(|d| d.checked_sub(2)).map(|d| d + 1)
+                }
+                Round => {
+                    delta.and_then(|d| d.checked_sub(1)).map(|d| d + 1)
                 }
                 // (a --)
                 Drop => delta.and_then(|d| d.checked_sub(1)),
